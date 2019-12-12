@@ -233,28 +233,29 @@ CONTRACT boidtoken : public contract
 
     ACTION newmemtermse(string terms, string hash, name dac_id);
 
-    /*
-    ACTION emplacestake(
-      name            from,
-      name            to,
-      asset           quantity,
-      asset           my_bonus,
-      uint32_t        expiration,
-      uint32_t        prev_claim_time,
-      asset           trans_quantity,
-      uint32_t        trans_expiration,
-      uint32_t        trans_prev_claim_time
-    );
+    ACTION reset(name dac_id);
+/*
+ACTION emplacestake(
+  name            from,
+  name            to,
+  asset           quantity,
+  asset           my_bonus,
+  uint32_t        expiration,
+  uint32_t        prev_claim_time,
+  asset           trans_quantity,
+  uint32_t        trans_expiration,
+  uint32_t        trans_prev_claim_time
+);
 
-    ACTION emplacedeleg(
-      name          from,
-      name          to,
-      asset         quantity,
-      uint32_t      expiration,
-      asset         trans_quantity,
-      uint32_t      trans_expiration
-    );
-    */
+ACTION emplacedeleg(
+  name          from,
+  name          to,
+  asset         quantity,
+  uint32_t      expiration,
+  asset         trans_quantity,
+  uint32_t      trans_expiration
+);
+*/
 
     /**
       \brief Test issue function for legacy issuing. Used to test vramtransfer()
@@ -639,6 +640,7 @@ EOSIO_DISPATCH(boidtoken,
     (newmemtermse)
     (memberrege)
     (memberunrege)
+    (reset)
 )
 
 float boidtoken::update_boidpower(

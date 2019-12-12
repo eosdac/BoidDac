@@ -193,6 +193,25 @@ void boidtoken::transfer(name from, name to, asset quantity, string memo)
   check(quantity <= available,
     "transferring more than available balance");
 
+  // check if custodian staking, TODO: Remove after staking implemented via token contract
+  dacdir::dac dac = dacdir::dac_for_symbol(extended_symbol{quantity.symbol, get_self()});
+  eosio::name custodian_contract = dac.account_for_type(dacdir::CUSTODIAN);
+
+  if (is_account(custodian_contract)) {
+    if (to == custodian_contract) {
+      eosio::action(eosio::permission_level{get_self(), "notify"_n},
+                    custodian_contract, "capturestake"_n,
+                    make_tuple(from, quantity, dac.dac_id))
+      .send();
+    }
+    else {
+        print("to is not custodian", custodian_contract, to);
+    }
+  }
+  else {
+      print("NOT account", custodian_contract);
+  }
+
   sub_balance(from, quantity, same_payer);
   add_balance(to, quantity, from);
 }
@@ -1845,4 +1864,15 @@ void boidtoken::newmemtermse(string terms, string hash, name dac_id) {
         termsinfo.hash = hash;
         termsinfo.version = next_version;
     });
+}
+
+void boidtoken::reset(name dac_id) {
+    require_auth(get_self());
+
+    weight_t vw_t(get_self(), dac_id.value);
+    auto w = vw_t.begin();
+
+    while (w != vw_t.end()){
+        w = vw_t.erase(w);
+    }
 }
