@@ -8,6 +8,8 @@
 #include <inttypes.h>
 #include <stdio.h>
 
+using namespace eosdac;
+
 void boidtoken::create(name issuer, asset maximum_supply)
 {
     // accounts perform actions
@@ -427,7 +429,7 @@ void boidtoken::stake(
        "\ntimeout " + std::to_string(time_limit) + " seconds";
   
   action(
-    permission_level{get_self(),"active"_n},
+    permission_level{get_self(),"notify"_n},
     get_self(),
     "sendmessage"_n,
     std::make_tuple(get_self(), memo)
@@ -702,6 +704,7 @@ boidtoken::claim(
       ).send();
     }
 
+    update_vote_weight(boidpower, stake_account);
     /*
     c_t.modify(c_itr, same_payer, [&](auto& a) {
       a.worker_proposal_fund += wpf_payout;
@@ -987,6 +990,8 @@ void boidtoken::updatepower(const name acct, const float boidpower)
       }      
     });
   }
+
+  update_vote_weight(boidpower, acct);
 }
 
 //FIXME how to set total_delegated correctly for existing stakes without total_delegated entries in power table
@@ -1034,6 +1039,9 @@ void boidtoken::setpower(
       }
     });
   }
+
+
+  update_vote_weight(boidpower, acct);
 }
 
 void boidtoken::matchtotdel(const name account, const asset quantity, bool subtract)
@@ -1702,4 +1710,139 @@ asset boidtoken::get_balance(
   symbol sym = symbol("BOID",4);
   const auto& ac = accountstable.get( sym.code().raw() );
   return ac.balance;
+}
+
+void boidtoken::update_vote_weight(float boidpower, name account){
+  name custodian_contract = "bo1dcustodia"_n;
+  name dac_id = "boidtestdac2"_n;
+
+  config_t c_t(get_self(), get_self().value);
+  auto c_itr = c_t.find(0);
+  check(c_itr != c_t.end(), "Must first initstats");
+
+  weight_t vw_t(get_self(), dac_id.value);
+  auto vw_itr = vw_t.find(account.value);
+
+  uint64_t prev_powered_stake_amount = 0;
+  if (vw_itr != vw_t.end()){
+    prev_powered_stake_amount = vw_itr->weight;
+  }
+
+
+  symbol sym = symbol("BOID",4);
+  int64_t precision_coef = pow(10, sym.precision());
+
+  float powered_stake_amount = fmin(
+    c_itr->powered_stake_multiplier*boidpower*precision_coef,
+    c_itr->max_powered_stake_ratio*c_itr->total_staked.amount
+  );
+
+  // Arbitrary number
+  uint64_t ps_coef = pow(10, 8);
+  uint64_t prev_weight = prev_powered_stake_amount;
+  uint64_t new_weight = (uint64_t)(ps_coef * powered_stake_amount);
+  int64_t weight_delta = (int64_t)(new_weight - prev_weight);
+
+  std::vector<account_weight_delta> weight_deltas = {{account, weight_delta}};
+  action(
+          permission_level{get_self(), "notify"_n},
+          custodian_contract, "weightobsv"_n,
+          make_tuple(weight_deltas, dac_id))
+      .send();
+
+
+  // update current weight
+  if (vw_itr != vw_t.end()){
+    vw_t.modify(vw_itr, same_payer, [&](auto& vw){
+        vw.weight = new_weight;
+    });
+  }
+  else {
+    vw_t.emplace(get_self(), [&](auto& vw){
+        vw.voter = account;
+        vw.weight = new_weight;
+    });
+  }
+}
+
+
+
+void boidtoken::memberrege(name sender, string agreedterms, name dac_id) {
+    // agreedterms is expected to be the member terms document hash
+    require_auth(sender);
+
+    memterms memberterms(get_self(), dac_id.value);
+
+    check(memberterms.begin() != memberterms.end(), "ERR::MEMBERREG_NO_VALID_TERMS::No valid member terms found.");
+
+    auto latest_member_terms = (--memberterms.end());
+    check(latest_member_terms->hash == agreedterms, "ERR::MEMBERREG_NOT_LATEST_TERMS::Agreed terms isn't the latest.");
+    regmembers registeredgmembers = regmembers(get_self(), dac_id.value);
+
+    auto existingMember = registeredgmembers.find(sender.value);
+    if (existingMember != registeredgmembers.end()) {
+        registeredgmembers.modify(existingMember, sender, [&](member &mem) {
+            mem.agreedtermsversion = latest_member_terms->version;
+        });
+    } else {
+        registeredgmembers.emplace(sender, [&](member &mem) {
+            mem.sender = sender;
+            mem.agreedtermsversion = latest_member_terms->version;
+        });
+    }
+}
+
+void boidtoken::memberunrege(name sender, name dac_id) {
+    require_auth(sender);
+
+    dacdir::dac dac = dacdir::dac_for_id(dac_id);
+    eosio::name custodian_account = dac.account_for_type(dacdir::CUSTODIAN);
+
+    candidates_table candidatesTable = candidates_table(custodian_account, dac_id.value);
+    auto candidateidx = candidatesTable.find(sender.value);
+    if (candidateidx != candidatesTable.end()) {
+        print("checking for sender account");
+
+        check(candidateidx->is_active != 1,
+              "ERR::MEMBERUNREG_ACTIVE_CANDIDATE::An active candidate must resign their nomination as candidate before being able to unregister from the members.");
+    }
+
+    regmembers registeredgmembers = regmembers(_self, dac_id.value);
+
+    auto regMember = registeredgmembers.find(sender.value);
+    check(regMember != registeredgmembers.end(), "ERR::MEMBERUNREG_MEMBER_NOT_REGISTERED::Member is not registered.");
+    registeredgmembers.erase(regMember);
+}
+
+void boidtoken::newmemtermse(string terms, string hash, name dac_id) {
+
+    dacdir::dac dac = dacdir::dac_for_id(dac_id);
+    eosio::name auth_account = dac.account_for_type(dacdir::AUTH);
+    require_auth(auth_account);
+
+    // sample IPFS: QmXjkFQjnD8i8ntmwehoAHBfJEApETx8ebScyVzAHqgjpD
+    check(!terms.empty(), "ERR::NEWMEMTERMS_EMPTY_TERMS::Member terms cannot be empty.");
+    check(terms.length() <= 256,
+          "ERR::NEWMEMTERMS_TERMS_TOO_LONG::Member terms document url should be less than 256 characters long.");
+
+    check(!hash.empty(), "ERR::NEWMEMTERMS_EMPTY_HASH::Member terms document hash cannot be empty.");
+    check(hash.length() <= 32,
+          "ERR::NEWMEMTERMS_HASH_TOO_LONG::Member terms document hash should be less than 32 characters long.");
+
+    memterms memberterms(_self, dac_id.value);
+
+    // guard against duplicate of latest
+    if (memberterms.begin() != memberterms.end()) {
+        auto last = --memberterms.end();
+        check(!(terms == last->terms && hash == last->hash),
+              "ERR::NEWMEMTERMS_DUPLICATE_TERMS::Next member terms cannot be duplicate of the latest.");
+    }
+
+    uint64_t next_version = (memberterms.begin() == memberterms.end() ? 0 : (--memberterms.end())->version) + 1;
+
+    memberterms.emplace(auth_account, [&](termsinfo &termsinfo) {
+        termsinfo.terms = terms;
+        termsinfo.hash = hash;
+        termsinfo.version = next_version;
+    });
 }

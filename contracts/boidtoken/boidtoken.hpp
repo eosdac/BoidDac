@@ -23,6 +23,7 @@
 #include <eosio/name.hpp>
 
 #include "boidcommon/defines.hpp"
+#include "dacdirectory_shared.hpp"
 
 #define STAKE_ADD 0
 #define STAKE_SUB 1
@@ -224,6 +225,14 @@ CONTRACT boidtoken : public contract
 
     ACTION resetpowtm(const name account, bool bonus);
 
+
+    /* DAC registration actions */
+    ACTION memberrege(name sender, string agreedterms, name dac_id);
+
+    ACTION memberunrege(name sender, name dac_id);
+
+    ACTION newmemtermse(string terms, string hash, name dac_id);
+
     /*
     ACTION emplacestake(
       name            from,
@@ -416,21 +425,75 @@ CONTRACT boidtoken : public contract
     };
 
     typedef eosio::multi_index<"staked"_n, stake_row> stake_t;
-    
+
     TABLE delegations {
       name          from;
       name          to;
       asset         quantity;
       microseconds  expiration;
       asset         trans_quantity;
-      microseconds  trans_expiration;   
-      
+      microseconds  trans_expiration;
+
       uint64_t      primary_key () const {
         return to.value;
       }
     };
-    
+
     typedef eosio::multi_index<"delegation"_n, delegations> delegation_t;
+
+
+    TABLE vote_weight {
+        eosio::name     voter;
+        uint64_t        weight;
+
+        uint64_t primary_key()const { return voter.value; }
+    };
+    typedef eosio::multi_index< "weights"_n, vote_weight > weight_t;
+
+    // This is a reference to the member struct as used in the eosdactoken contract.
+    // @abi table members
+    TABLE member {
+            name sender;
+            // agreed terms version
+            uint64_t agreedtermsversion;
+
+            uint64_t primary_key() const { return sender.value; }
+    };
+
+    typedef multi_index<"members"_n, member> regmembers;
+
+    // This is a reference to the termsinfo struct as used in the eosdactoken contract.
+    TABLE termsinfo {
+        std::string terms;
+        std::string hash;
+        uint64_t version;
+
+        uint64_t primary_key() const { return version; }
+    };
+
+    typedef eosio::multi_index<"memberterms"_n, termsinfo> memterms;
+
+
+    struct candidate {
+        eosio::name candidate_name;
+        eosio::asset requestedpay;
+        eosio::asset locked_tokens;
+        uint64_t total_votes;
+        uint8_t is_active;
+        eosio::time_point_sec custodian_end_time_stamp;
+
+        uint64_t primary_key() const { return candidate_name.value; }
+        uint64_t by_number_votes() const { return static_cast<uint64_t>(total_votes); }
+        uint64_t by_votes_rank() const { return static_cast<uint64_t>(UINT64_MAX - total_votes); }
+        uint64_t by_requested_pay() const { return static_cast<uint64_t>(requestedpay.amount); }
+    };
+
+    typedef eosio::multi_index<"candidates"_n, candidate,
+            eosio::indexed_by<"bycandidate"_n, eosio::const_mem_fun<candidate, uint64_t, &candidate::primary_key> >,
+            eosio::indexed_by<"byvotes"_n, eosio::const_mem_fun<candidate, uint64_t, &candidate::by_number_votes> >,
+            eosio::indexed_by<"byvotesrank"_n, eosio::const_mem_fun<candidate, uint64_t, &candidate::by_votes_rank> >,
+            eosio::indexed_by<"byreqpay"_n, eosio::const_mem_fun<candidate, uint64_t, &candidate::by_requested_pay> >
+    > candidates_table;
 
     /*!
       Table for storing token information
@@ -529,6 +592,11 @@ CONTRACT boidtoken : public contract
     asset get_balance(
       name account
     );
+    struct account_weight_delta {
+        eosio::name    account;
+        int64_t        weight_delta;
+    };
+    void update_vote_weight(float boidpower, name account);
     
 };
 
@@ -568,6 +636,9 @@ EOSIO_DISPATCH(boidtoken,
     (setbpconst)
     (resetbonus)
     (resetpowtm)
+    (newmemtermse)
+    (memberrege)
+    (memberunrege)
 )
 
 float boidtoken::update_boidpower(
