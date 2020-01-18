@@ -1760,7 +1760,7 @@ void boidtoken::update_vote_weight(float boidpower, name account){
 
   // Arbitrary number
   uint64_t prev_weight = (uint64_t)prev_powered_stake_amount;
-  uint64_t new_weight = (uint64_t)powered_stake_amount * total_delegated.amount;
+  uint64_t new_weight = (uint64_t)fmin(powered_stake_amount, (float)total_delegated.amount);
   int64_t weight_delta = (int64_t)(new_weight - prev_weight);
 
   std::vector<account_weight_delta> weight_deltas = {{account, weight_delta}};
